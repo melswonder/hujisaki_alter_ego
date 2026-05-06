@@ -1,5 +1,7 @@
 # 藤崎 Alter Ego
 
+<img width="1470" height="924" alt="スクリーンショット 2026-05-07 2 03 01" src="https://github.com/user-attachments/assets/6a3f32ab-ddb3-4dad-8b31-fef1b259c2a3" />
+
 藤崎をベースにした「アルターエゴ」をフルスクリーン GUI で喋らせる音声チャット。
 
 - LLM (Claude / ChatGPT) と会話
