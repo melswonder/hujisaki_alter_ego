@@ -7,7 +7,7 @@ PY := $(VENV)/bin/python
 .PHONY: init run voice clean help
 
 help:
-	@echo "make init   - .venv 作成 + 依存インストール"
+	@echo "make init   - submodule 取得 + .venv 作成 + 依存インストール"
 	@echo "make / run  - GUI (face_chat) を起動"
 	@echo "make voice  - CLI 版 (voice_chat) を起動"
 	@echo "make clean  - .venv を削除"
@@ -16,6 +16,7 @@ $(VENV):
 	uv venv --python $(PYTHON_VERSION) $(VENV)
 
 init: $(VENV)
+	git submodule update --init --recursive
 	uv pip install --python $(PY) -r GPT-SoVITS/requirements.txt
 	uv pip install --python $(PY) -r GPT-SoVITS/extra-req.txt
 	uv pip install --python $(PY) anthropic openai python-dotenv sounddevice pillow

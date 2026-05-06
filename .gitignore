@@ -14,7 +14,6 @@ huzisaki_models/huzisaki_e6_s144.pth
 
 # 環境
 .venv/
-GPT-SoVITS/
 __pycache__/
 *.pyc
 
