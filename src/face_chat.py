@@ -61,27 +61,51 @@ class FaceChatApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("alter_ego")
-        self.root.geometry("760x960")
+        self.root.configure(bg="#000")
+        try:
+            self.root.attributes("-fullscreen", True)
+        except tk.TclError:
+            sw = self.root.winfo_screenwidth()
+            sh = self.root.winfo_screenheight()
+            self.root.geometry(f"{sw}x{sh}+0+0")
+        self.root.bind("<Escape>", lambda e: self._toggle_fullscreen())
+        self._fullscreen = True
 
-        self.face_label = tk.Label(root, bg="#111")
-        self.face_label.pack(fill="both", expand=True)
+        # 顔画像 (背景, 画面いっぱい)
+        self.face_label = tk.Label(root, bg="#000", borderwidth=0)
+        self.face_label.place(x=0, y=0, relwidth=1, relheight=1)
 
+        # 入力 (画面の上にオーバーレイ)
+        input_frame = tk.Frame(root, bg="#000", bd=0)
+        input_frame.place(relx=0.5, y=20, anchor="n", relwidth=0.7)
+        self.entry = tk.Entry(
+            input_frame,
+            font=("Helvetica", 16),
+            bg="#fafafa",
+            fg="#111",
+            insertbackground="#111",
+            relief="flat",
+        )
+        self.entry.pack(side="left", fill="x", expand=True, ipady=8, padx=(0, 8))
+        self.entry.bind("<Return>", lambda e: self.on_send())
+        self.send_btn = ttk.Button(input_frame, text="送信", command=self.on_send)
+        self.send_btn.pack(side="right")
+
+        # チャットログ (入力のすぐ下にオーバーレイ)
         self.chat_log = scrolledtext.ScrolledText(
             root,
-            height=8,
             state="disabled",
             font=("Helvetica", 13),
             wrap="word",
+            bg="#0a0a0a",
+            fg="#f0f0f0",
+            insertbackground="#f0f0f0",
+            borderwidth=0,
+            highlightthickness=0,
+            padx=10,
+            pady=8,
         )
-        self.chat_log.pack(fill="x", padx=8, pady=(4, 0))
-
-        input_frame = tk.Frame(root)
-        input_frame.pack(fill="x", padx=8, pady=8)
-        self.entry = tk.Entry(input_frame, font=("Helvetica", 14))
-        self.entry.pack(side="left", fill="x", expand=True, ipady=4)
-        self.entry.bind("<Return>", lambda e: self.on_send())
-        self.send_btn = ttk.Button(input_frame, text="送信", command=self.on_send)
-        self.send_btn.pack(side="right", padx=(8, 0))
+        self.chat_log.place(relx=0.5, y=72, anchor="n", relwidth=0.7, height=220)
 
         self._face_id = -1
         self._face_size: tuple[int, int] = (0, 0)
@@ -99,6 +123,13 @@ class FaceChatApp:
         self.root.after(100, lambda: self.set_face(DEFAULT_FACE))
         self._poll_results()
         self.entry.focus_set()
+
+    def _toggle_fullscreen(self) -> None:
+        self._fullscreen = not self._fullscreen
+        try:
+            self.root.attributes("-fullscreen", self._fullscreen)
+        except tk.TclError:
+            pass
 
     def _load_tts(self) -> None:
         try:
