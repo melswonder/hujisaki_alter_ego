@@ -21,8 +21,10 @@ from pathlib import Path
 import numpy as np
 import sounddevice as sd
 from anthropic import Anthropic
+from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(ROOT / ".env")
 # GPT-SoVITS の sv.py が os.getcwd()/GPT_SoVITS/eres2net を sys.path に足す前提なので
 # モジュール import より前に GPT-SoVITS ディレクトリへ chdir する必要がある
 os.chdir(ROOT / "GPT-SoVITS")
