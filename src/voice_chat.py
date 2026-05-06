@@ -1,26 +1,19 @@
-"""Claude API → GPT-SoVITS (huzisaki voice) ストリーミング音声チャット。
-
-事前準備:
-  - 環境変数 ANTHROPIC_API_KEY を設定
-  - python -m src.voice_chat で起動
+"""Claude API → GPT-SoVITS (huzisaki voice) 音声チャット。
 
 挙動:
   - 標準入力に質問を入れる
-  - Claude がストリーミングでテキストを返す
-  - 句点 (。?!) ごとに切って GPT-SoVITS に投げ、音声を順次再生する
+  - Claude の応答を全部受け取ってから TTS に投げる(非ストリーミング)
+  - 生成された音声を再生
 """
 
 from __future__ import annotations
 
 import os
-import queue
 import sys
-import threading
 from pathlib import Path
 
 import numpy as np
 import sounddevice as sd
-from anthropic import Anthropic
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -39,8 +32,61 @@ SYSTEM_PROMPT = (
     "あなたは藤崎というキャラクターとして日本語で短く自然に応答してください。"
     "1〜3文程度で簡潔に。語尾は柔らかめ。"
 )
-SENTENCE_DELIMS = "。?!？！\n"
-MIN_CHUNK_CHARS = 8
+
+
+class LLMClient:
+    def chat(self, history: list[dict]) -> str:
+        raise NotImplementedError
+
+
+class AnthropicClient(LLMClient):
+    def __init__(self) -> None:
+        from anthropic import Anthropic
+
+        self.client = Anthropic()
+        self.model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
+
+    def chat(self, history: list[dict]) -> str:
+        resp = self.client.messages.create(
+            model=self.model,
+            max_tokens=512,
+            system=SYSTEM_PROMPT,
+            messages=history,
+        )
+        return "".join(b.text for b in resp.content if b.type == "text")
+
+
+class OpenAIClient(LLMClient):
+    def __init__(self) -> None:
+        from openai import OpenAI
+
+        self.client = OpenAI()
+        self.model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+
+    def chat(self, history: list[dict]) -> str:
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}, *history]
+        resp = self.client.chat.completions.create(
+            model=self.model,
+            max_tokens=512,
+            messages=messages,
+        )
+        return resp.choices[0].message.content or ""
+
+
+def build_llm() -> LLMClient:
+    provider = os.environ.get("LLM_PROVIDER", "anthropic").lower()
+    if provider == "anthropic":
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            print("ANTHROPIC_API_KEY を設定してください", file=sys.stderr)
+            sys.exit(1)
+        return AnthropicClient()
+    if provider == "openai":
+        if not os.environ.get("OPENAI_API_KEY"):
+            print("OPENAI_API_KEY を設定してください", file=sys.stderr)
+            sys.exit(1)
+        return OpenAIClient()
+    print(f"不明な LLM_PROVIDER: {provider} (anthropic | openai)", file=sys.stderr)
+    sys.exit(1)
 
 
 def load_tts() -> TTS:
@@ -49,21 +95,7 @@ def load_tts() -> TTS:
     return TTS(config)
 
 
-def player_loop(audio_q: queue.Queue) -> None:
-    while True:
-        item = audio_q.get()
-        if item is None:
-            return
-        sr, audio = item
-        if audio.dtype != np.float32:
-            audio = audio.astype(np.float32) / np.iinfo(audio.dtype).max
-        sd.play(audio, sr, blocking=True)
-
-
-def speak(tts: TTS, text: str, audio_q: queue.Queue) -> None:
-    text = text.strip()
-    if not text:
-        return
+def synthesize(tts: TTS, text: str) -> tuple[int, np.ndarray]:
     gen = tts.run({
         "text": text,
         "text_lang": "ja",
@@ -74,39 +106,35 @@ def speak(tts: TTS, text: str, audio_q: queue.Queue) -> None:
         "top_p": 1.0,
         "temperature": 1.0,
         "text_split_method": "cut5",
-        "streaming_mode": True,
-        "parallel_infer": False,
+        "streaming_mode": False,
+        "parallel_infer": True,
     })
-    for sr, audio in gen:
-        audio_q.put((sr, audio))
+    chunks: list[np.ndarray] = []
+    sr = 32000
+    for s, audio in gen:
+        chunks.append(audio)
+        sr = s
+    if not chunks:
+        return sr, np.zeros(0, dtype=np.float32)
+    return sr, np.concatenate(chunks)
 
 
-def chunk_at_delim(buffer: str) -> tuple[str | None, str]:
-    if len(buffer) < MIN_CHUNK_CHARS:
-        return None, buffer
-    idx = -1
-    for d in SENTENCE_DELIMS:
-        i = buffer.find(d)
-        if i >= 0 and (idx < 0 or i < idx):
-            idx = i
-    if idx < 0:
-        return None, buffer
-    return buffer[: idx + 1], buffer[idx + 1 :]
+def play(sr: int, audio: np.ndarray) -> None:
+    if audio.size == 0:
+        return
+    if audio.dtype != np.float32:
+        audio = audio.astype(np.float32) / np.iinfo(audio.dtype).max
+    sd.play(audio, sr, blocking=True)
 
 
 def main() -> None:
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("ANTHROPIC_API_KEY を設定してください", file=sys.stderr)
-        sys.exit(1)
+    llm = build_llm()
+    print(f"[init] LLM: {type(llm).__name__} (model={llm.model})")
 
     print("[init] TTS を読み込み中…(初回は時間がかかります)")
     tts = load_tts()
     print("[init] TTS 準備完了")
 
-    audio_q: queue.Queue = queue.Queue()
-    threading.Thread(target=player_loop, args=(audio_q,), daemon=True).start()
-
-    client = Anthropic()
     history: list[dict] = []
 
     print("\n質問を入力(空行で終了):")
@@ -119,29 +147,13 @@ def main() -> None:
             break
         history.append({"role": "user", "content": user_msg})
 
-        accumulated = ""
-        buffer = ""
-        with client.messages.stream(
-            model="claude-sonnet-4-5",
-            max_tokens=512,
-            system=SYSTEM_PROMPT,
-            messages=history,
-        ) as stream:
-            for delta in stream.text_stream:
-                print(delta, end="", flush=True)
-                buffer += delta
-                accumulated += delta
-                while True:
-                    chunk, buffer = chunk_at_delim(buffer)
-                    if chunk is None:
-                        break
-                    speak(tts, chunk, audio_q)
-        if buffer.strip():
-            speak(tts, buffer, audio_q)
-        print()
-        history.append({"role": "assistant", "content": accumulated})
+        text = llm.chat(history)
+        print(text)
+        history.append({"role": "assistant", "content": text})
 
-    audio_q.put(None)
+        if text.strip():
+            sr, audio = synthesize(tts, text)
+            play(sr, audio)
 
 
 if __name__ == "__main__":
