@@ -11,3 +11,12 @@ huzisaki_models/huzisaki-e10.ckpt
 huzisaki_models/huzisaki_e2_s48.pth
 huzisaki_models/huzisaki_e4_s96.pth
 huzisaki_models/huzisaki_e6_s144.pth
+
+# 環境
+.venv/
+GPT-SoVITS/
+__pycache__/
+*.pyc
+
+# ローカル設定
+.env
