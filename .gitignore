@@ -1,0 +1,13 @@
+.DS_Store
+
+# 学習用データ・キャッシュ(推論には不要)
+huzisaki_models/*.wav
+huzisaki_models/*.wav.pt
+huzisaki_models/*.list
+
+# 古いエポックのモデル(推論は最新だけ使用)
+huzisaki_models/huzisaki-e5.ckpt
+huzisaki_models/huzisaki-e10.ckpt
+huzisaki_models/huzisaki_e2_s48.pth
+huzisaki_models/huzisaki_e4_s96.pth
+huzisaki_models/huzisaki_e6_s144.pth
