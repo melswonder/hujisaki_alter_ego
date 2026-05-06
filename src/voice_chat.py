@@ -28,9 +28,11 @@ from GPT_SoVITS.TTS_infer_pack.TTS import TTS, TTS_Config  # noqa: E402
 
 REF_AUDIO = ROOT / "huzisaki_models" / "huzisaki_007.wav"
 REF_TEXT = "問題ないってことなんじゃないかな 犯人が証拠隠滅したってことじゃあ"
+PERSONA_PATH = ROOT / "src" / "persona.md"
 SYSTEM_PROMPT = (
-    "あなたは藤崎というキャラクターとして日本語で短く自然に応答してください。"
-    "1〜3文程度で簡潔に。語尾は柔らかめ。"
+    PERSONA_PATH.read_text(encoding="utf-8")
+    if PERSONA_PATH.exists()
+    else "あなたは藤崎というキャラクターとして日本語で短く自然に応答してください。"
 )
 
 
@@ -53,7 +55,7 @@ class AnthropicClient(LLMClient):
     def chat(self, history: list[dict]) -> str:
         resp = self.client.messages.create(
             model=self.model,
-            max_tokens=512,
+            max_tokens=1024,
             system=self.system_prompt,
             messages=history,
         )
@@ -72,7 +74,7 @@ class OpenAIClient(LLMClient):
         messages = [{"role": "system", "content": self.system_prompt}, *history]
         resp = self.client.chat.completions.create(
             model=self.model,
-            max_tokens=512,
+            max_tokens=1024,
             messages=messages,
         )
         return resp.choices[0].message.content or ""

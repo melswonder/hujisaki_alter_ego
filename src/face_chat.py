@@ -19,6 +19,7 @@ from PIL import Image, ImageTk
 
 from voice_chat import (
     ROOT,
+    SYSTEM_PROMPT as PERSONA_PROMPT,
     build_llm,
     load_tts,
     play,
@@ -35,14 +36,14 @@ FACE_LABELS = {
     12: "不安", 13: "大笑い", 14: "考え中", 15: "すすり泣き",
 }
 
-GUI_SYSTEM_PROMPT = (
-    "あなたは藤崎というキャラクターとして日本語で短く自然に応答してください。"
-    "1〜3文程度で簡潔に。語尾は柔らかめ。"
-    "返答の先頭に必ず [NN] (00〜15) の表情番号を付けてください。"
+FACE_TAG_INSTRUCTION = (
+    "\n\n# 表情タグ (この実行環境で必須)\n"
+    "返答の先頭に必ず [NN] (00〜15) の表情番号を付けてください。例: 「[02] こんにちは、ご主人タマ♪」\n"
     "00=微笑み, 01=嬉しい, 02=にっこり, 03=驚き, 04=焦り, 05=ひらめき, "
     "06=落ち込み, 07=びっくり, 08=慌て, 09=号泣, 10=静かに涙, 11=涙目, "
-    "12=不安, 13=大笑い, 14=考え中, 15=すすり泣き。"
+    "12=不安, 13=大笑い, 14=考え中, 15=すすり泣き"
 )
+GUI_SYSTEM_PROMPT = PERSONA_PROMPT + FACE_TAG_INSTRUCTION
 
 FACE_TAG_RE = re.compile(r"^\s*[\[［](\d{1,2})[\]］]\s*")
 
@@ -140,8 +141,8 @@ class FaceChatApp:
         if self.chat_log.index("end-1c") != "1.0":
             self.chat_log.insert("end", "\n\n\n")  # 3 行間隔
         prefix = {
-            "user": "あなた: ",
-            "assistant": "藤崎: ",
+            "user": "ご主人タマ: ",
+            "assistant": "アルターエゴ: ",
             "system": "[system] ",
         }[role]
         self.chat_log.insert("end", prefix + text)
