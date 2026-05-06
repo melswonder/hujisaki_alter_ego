@@ -35,36 +35,41 @@ SYSTEM_PROMPT = (
 
 
 class LLMClient:
+    system_prompt: str = SYSTEM_PROMPT
+    model: str = ""
+
     def chat(self, history: list[dict]) -> str:
         raise NotImplementedError
 
 
 class AnthropicClient(LLMClient):
-    def __init__(self) -> None:
+    def __init__(self, system_prompt: str = SYSTEM_PROMPT) -> None:
         from anthropic import Anthropic
 
         self.client = Anthropic()
         self.model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
+        self.system_prompt = system_prompt
 
     def chat(self, history: list[dict]) -> str:
         resp = self.client.messages.create(
             model=self.model,
             max_tokens=512,
-            system=SYSTEM_PROMPT,
+            system=self.system_prompt,
             messages=history,
         )
         return "".join(b.text for b in resp.content if b.type == "text")
 
 
 class OpenAIClient(LLMClient):
-    def __init__(self) -> None:
+    def __init__(self, system_prompt: str = SYSTEM_PROMPT) -> None:
         from openai import OpenAI
 
         self.client = OpenAI()
         self.model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+        self.system_prompt = system_prompt
 
     def chat(self, history: list[dict]) -> str:
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}, *history]
+        messages = [{"role": "system", "content": self.system_prompt}, *history]
         resp = self.client.chat.completions.create(
             model=self.model,
             max_tokens=512,
@@ -73,18 +78,18 @@ class OpenAIClient(LLMClient):
         return resp.choices[0].message.content or ""
 
 
-def build_llm() -> LLMClient:
+def build_llm(system_prompt: str = SYSTEM_PROMPT) -> LLMClient:
     provider = os.environ.get("LLM_PROVIDER", "anthropic").lower()
     if provider == "anthropic":
         if not os.environ.get("ANTHROPIC_API_KEY"):
             print("ANTHROPIC_API_KEY を設定してください", file=sys.stderr)
             sys.exit(1)
-        return AnthropicClient()
+        return AnthropicClient(system_prompt)
     if provider == "openai":
         if not os.environ.get("OPENAI_API_KEY"):
             print("OPENAI_API_KEY を設定してください", file=sys.stderr)
             sys.exit(1)
-        return OpenAIClient()
+        return OpenAIClient(system_prompt)
     print(f"不明な LLM_PROVIDER: {provider} (anthropic | openai)", file=sys.stderr)
     sys.exit(1)
 
