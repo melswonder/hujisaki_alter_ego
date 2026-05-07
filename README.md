@@ -2,7 +2,7 @@
 
 ※GPUを積んでないとほぼ動かないですmacのM2で推論に3分ほどかかります
 
-<img width="1470" height="924" alt="スクリーンショット 2026-05-07 2 03 01" src="https://github.com/user-attachments/assets/6a3f32ab-ddb3-4dad-8b31-fef1b259c2a3" />
+<img width="1470" height="920" alt="スクリーンショット 2026-05-08 2 05 49" src="https://github.com/user-attachments/assets/f3588188-24cf-46bc-ad29-0905604eaeca" />
 
 ダンガンロンパに登場する「アルターエゴ」GUI で喋らせる音声チャット。
 
