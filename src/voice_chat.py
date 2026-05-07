@@ -179,7 +179,13 @@ def load_tts() -> TTS:
     return tts
 
 
-def synthesize(tts: TTS, text: str) -> tuple[int, np.ndarray]:
+def synthesize(tts: TTS, text: str) -> Iterator[tuple[int, np.ndarray]]:
+    """text を合成し (sr, chunk) を順次 yield する。
+
+    TTS_STREAMING=1 のときは streaming_mode を有効化し、合成途中のチャンクから
+    順に yield する。無効時も内部仕様により 1 度だけ全体音声を yield する。
+    """
+    streaming = os.environ.get("TTS_STREAMING", "").lower() in ("1", "true", "yes")
     gen = tts.run({
         "text": text,
         "text_lang": "ja",
@@ -191,17 +197,12 @@ def synthesize(tts: TTS, text: str) -> tuple[int, np.ndarray]:
         "temperature": 1.0,
         # 既に文単位で渡しているので追加分割は不要
         "text_split_method": "cut0",
-        "streaming_mode": False,
+        "streaming_mode": streaming,
         "parallel_infer": True,
     })
-    chunks: list[np.ndarray] = []
-    sr = 32000
-    for s, audio in gen:
-        chunks.append(audio)
-        sr = s
-    if not chunks:
-        return sr, np.zeros(0, dtype=np.float32)
-    return sr, np.concatenate(chunks)
+    for sr, audio in gen:
+        if audio is not None and len(audio) > 0:
+            yield sr, audio
 
 
 def play(sr: int, audio: np.ndarray) -> None:
@@ -256,8 +257,7 @@ class SpeechPipeline:
                 if item is self._SENTINEL:
                     return
                 try:
-                    sr, audio = synthesize(self.tts, item)
-                    if audio.size > 0:
+                    for sr, audio in synthesize(self.tts, item):
                         self._play_q.put((sr, audio))
                 except Exception as e:
                     print(f"[error] TTS synth: {e}", file=sys.stderr, flush=True)
