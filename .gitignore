@@ -1,7 +1,7 @@
 .DS_Store
 
 # 学習用データ・キャッシュ(推論には不要)
-huzisaki_models/*.wav
+# huzisaki_models/*.wav
 huzisaki_models/*.wav.pt
 huzisaki_models/*.list
 
