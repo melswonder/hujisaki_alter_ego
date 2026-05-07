@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import queue
 import re
@@ -331,7 +332,35 @@ class FaceChatApp:
             self.send_btn.configure(state="normal")
 
 
+def _apply_cli_flags(args: argparse.Namespace) -> None:
+    """CLI フラグを環境変数に流す。下流コードは env を見て分岐する。"""
+    if args.no_tts:
+        os.environ["ALTER_EGO_NO_TTS"] = "1"
+    if args.streaming:
+        os.environ["TTS_STREAMING"] = "1"
+    if args.fast:
+        os.environ.setdefault("TTS_COMPILE", "1")
+        os.environ.setdefault("TTS_COMPILE_MODE", "reduce-overhead")
+        os.environ.setdefault("TTS_COMPILE_BACKEND", "inductor")
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description="アルターエゴ GUI")
+    parser.add_argument(
+        "--eko", "--no-tts", action="store_true", dest="no_tts",
+        help="TTS をスキップしてチャットのみで起動",
+    )
+    parser.add_argument(
+        "--streaming", action="store_true",
+        help="TTS のストリーミング合成を有効化 (体感レイテンシ短縮)",
+    )
+    parser.add_argument(
+        "--fast", action="store_true",
+        help="torch.compile (reduce-overhead) を有効化",
+    )
+    args = parser.parse_args()
+    _apply_cli_flags(args)
+
     root = tk.Tk()
     FaceChatApp(root)
     root.mainloop()
