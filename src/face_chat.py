@@ -3,15 +3,17 @@
 仕様:
   - フルスクリーン表示 (Esc で切替)
   - 顔画像は cover スケールで画面全面 (LLM 応答先頭の [NN] で切替)
-  - 入力は画面上部にオーバーレイ (透過は不可: tkinter Entry の制約)
+  - 入力は画面下部にオーバーレイ (透過は不可: tkinter Entry の制約)
   - レスポンス (チャットログ) は背景画像と同じ Canvas に直接 create_text で
     描画するため真の透過になる
   - 送受信のみを GUI 表示。system/error/face ログは標準出力
-  - 応答テキストは GPT-SoVITS で再生 (TTS 準備完了まで音声は出ない)
+  - 応答テキストは LLM ストリーム → 句点で区切って 1 文ずつ TTS へ投入
+    → SpeechPipeline が順次再生 (合成と再生は別スレッド)
 """
 
 from __future__ import annotations
 
+import os
 import queue
 import re
 import sys
@@ -24,10 +26,10 @@ from PIL import Image, ImageTk
 from src.voice_chat import (
     ROOT,
     SYSTEM_PROMPT as PERSONA_PROMPT,
+    SpeechPipeline,
     build_llm,
     load_tts,
-    play,
-    synthesize,
+    split_sentences,
 )
 
 FACE_DIR = ROOT / "face"
@@ -50,22 +52,15 @@ FACE_TAG_INSTRUCTION = (
 GUI_SYSTEM_PROMPT = PERSONA_PROMPT + FACE_TAG_INSTRUCTION
 
 FACE_TAG_RE = re.compile(r"^\s*[\[［](\d{1,2})[\]］]\s*")
+FACE_TAG_OPEN = ("[", "［")
+FACE_TAG_CLOSE = ("]", "］")
 
 LOG_MAX_MESSAGES = 6  # 直近 N 件だけ画面に残す
 LOG_FONT = ("Helvetica", 14)
-LOG_TOP = 80          # 入力欄の下から開始する y 座標
+LOG_TOP = 20          # 画面上端から開始する y 座標
 LOG_GAP = 36          # 各メッセージの間隔 (px)
 LOG_REL_WIDTH = 0.7   # 画面幅に対するログ領域の比率
 LOG_SHADOW = "#000"   # 文字を読みやすくする縁取り色
-
-
-def parse_face(text: str) -> tuple[int, str]:
-    m = FACE_TAG_RE.match(text)
-    if m:
-        face = int(m.group(1))
-        if 0 <= face <= 15:
-            return face, text[m.end():]
-    return DEFAULT_FACE, text
 
 
 class FaceChatApp:
@@ -90,20 +85,18 @@ class FaceChatApp:
         self.face_item = self.canvas.create_image(0, 0, anchor="nw")
 
         # 入力欄 (透過不可なので最小限のスタイル)
-        input_frame = tk.Frame(root, bg="#000", bd=0)
-        input_frame.place(relx=0.5, y=20, anchor="n", relwidth=0.7)
+        input_frame = tk.Frame(root, bg="#1f1f1f", bd=0)
+        input_frame.place(relx=0.5, rely=1.0, y=-12, anchor="s", relwidth=0.98)
         self.entry = tk.Entry(
             input_frame,
             font=("Helvetica", 16),
-            bg="#0d0d0d",
+            bg="#1f1f1f",
             fg="#fff",
             insertbackground="#fff",
             relief="flat",
-            highlightthickness=1,
-            highlightbackground="#444",
-            highlightcolor="#888",
+            highlightthickness=0,
         )
-        self.entry.pack(side="left", fill="x", expand=True, ipady=8, padx=(0, 8))
+        self.entry.pack(side="left", fill="x", expand=True, ipady=10, padx=(8, 8))
         self.entry.bind("<Return>", lambda e: self.on_send())
         self.send_btn = ttk.Button(input_frame, text="送信", command=self.on_send)
         self.send_btn.pack(side="right")
@@ -119,16 +112,30 @@ class FaceChatApp:
 
         self.history: list[dict] = []
         self.tts = None
+        self.pipeline: SpeechPipeline | None = None
         self.result_q: queue.Queue = queue.Queue()
 
         self.llm = build_llm(system_prompt=GUI_SYSTEM_PROMPT)
         print(f"[system] LLM: {type(self.llm).__name__} ({self.llm.model})", flush=True)
-        print("[system] TTS を読み込み中…(初回は時間がかかります)", flush=True)
-        threading.Thread(target=self._load_tts, daemon=True).start()
+        self._tts_disabled = os.environ.get("ALTER_EGO_NO_TTS", "").lower() in ("1", "true", "yes")
+        if self._tts_disabled:
+            print("[system] ALTER_EGO_NO_TTS=1: TTS をスキップしてチャットのみで起動します", flush=True)
+        else:
+            print("[system] TTS を読み込み中…(初回は時間がかかります)", flush=True)
+            threading.Thread(target=self._load_tts, daemon=True).start()
 
         self.root.after(100, lambda: self.set_face(DEFAULT_FACE))
         self._poll_results()
         self.entry.focus_set()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _on_close(self) -> None:
+        if self.pipeline is not None:
+            try:
+                self.pipeline.shutdown()
+            except Exception:
+                pass
+        self.root.destroy()
 
     def _toggle_fullscreen(self) -> None:
         self._fullscreen = not self._fullscreen
@@ -245,12 +252,51 @@ class FaceChatApp:
         ).start()
 
     def _reply(self, history: list[dict]) -> None:
+        """LLM ストリームを読みながら、表情タグ → 句点区切り → TTS 投入を行う。"""
+        full_text = ""
+        body_buffer = ""
+        face_resolved = False
         try:
-            text = self.llm.chat(history)
+            for chunk in self.llm.chat_stream(history):
+                full_text += chunk
+                body_buffer += chunk
+                if not face_resolved:
+                    stripped = body_buffer.lstrip()
+                    if not stripped:
+                        continue
+                    if stripped[0] not in FACE_TAG_OPEN:
+                        # 先頭が [ で始まっていない → 表情タグ無し扱い
+                        self.result_q.put(("face", DEFAULT_FACE))
+                        face_resolved = True
+                    else:
+                        m = FACE_TAG_RE.match(body_buffer)
+                        if m:
+                            face = int(m.group(1))
+                            self.result_q.put((
+                                "face", face if 0 <= face <= 15 else DEFAULT_FACE,
+                            ))
+                            body_buffer = body_buffer[m.end():]
+                            face_resolved = True
+                        elif any(c in body_buffer for c in FACE_TAG_CLOSE):
+                            # 閉じ括弧は来たがマッチしない → 諦めてそのまま流す
+                            self.result_q.put(("face", DEFAULT_FACE))
+                            face_resolved = True
+                        else:
+                            # まだ閉じ括弧待ち。次チャンクへ
+                            continue
+                sentences, body_buffer = split_sentences(body_buffer)
+                for s in sentences:
+                    if self.pipeline is not None:
+                        self.pipeline.speak(s)
+            # ストリーム終了後の取りこぼし
+            if not face_resolved:
+                self.result_q.put(("face", DEFAULT_FACE))
+            if body_buffer.strip() and self.pipeline is not None:
+                self.pipeline.speak(body_buffer)
         except Exception as e:
             self.result_q.put(("error", str(e)))
             return
-        self.result_q.put(("reply", text))
+        self.result_q.put(("reply_done", full_text))
 
     def _poll_results(self) -> None:
         try:
@@ -264,28 +310,25 @@ class FaceChatApp:
     def _handle_result(self, kind: str, payload) -> None:
         if kind == "tts_ready":
             self.tts = payload
+            self.pipeline = SpeechPipeline(payload)
             print("[system] TTS 準備完了", flush=True)
-        elif kind == "reply":
-            face, body = parse_face(payload)
+        elif kind == "face":
+            face = payload
             label = FACE_LABELS.get(face, "?")
             self.set_face(face)
             print(f"[face] {face:02d} {label}", flush=True)
+        elif kind == "reply_done":
+            full_text = payload
+            # full_text には [NN] タグが残るので、ログ用に剥がす
+            m = FACE_TAG_RE.match(full_text)
+            body = full_text[m.end():] if m else full_text
             self._append_log("assistant", body)
-            self.history.append({"role": "assistant", "content": payload})
+            self.history.append({"role": "assistant", "content": full_text})
             self.send_btn.configure(state="normal")
             self.entry.focus_set()
-            if self.tts and body.strip():
-                threading.Thread(target=self._speak, args=(body,), daemon=True).start()
         elif kind == "error":
             print(f"[error] {payload}", flush=True, file=sys.stderr)
             self.send_btn.configure(state="normal")
-
-    def _speak(self, text: str) -> None:
-        try:
-            sr, audio = synthesize(self.tts, text)
-            play(sr, audio)
-        except Exception as e:
-            self.result_q.put(("error", f"TTS: {e}"))
 
 
 def main() -> None:
