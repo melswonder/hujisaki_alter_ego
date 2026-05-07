@@ -1,6 +1,6 @@
 PYTHON_VERSION ?= 3.10
 VENV ?= .venv
-PY := $(VENV)/bin/python
+PY := $(VENV)/Scripts/python.exe
 
 .DEFAULT_GOAL := run
 
