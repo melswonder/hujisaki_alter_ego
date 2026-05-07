@@ -2,7 +2,7 @@
 
 <img width="1470" height="924" alt="スクリーンショット 2026-05-07 2 03 01" src="https://github.com/user-attachments/assets/6a3f32ab-ddb3-4dad-8b31-fef1b259c2a3" />
 
-藤崎をベースにした「アルターエゴ」をフルスクリーン GUI で喋らせる音声チャット。
+ダンガンロンパに登場する「アルターエゴ」GUI で喋らせる音声チャット。
 
 - LLM (Claude / ChatGPT) と会話
 - 応答先頭の表情タグ `[NN]` で 16 種類の表情画像を切替
@@ -45,10 +45,7 @@
 git clone --recurse-submodules <this repo>
 cd hujisaki_alter_ego
 
-# 既に clone 済みなら
-git submodule update --init --recursive
-
-# venv 作成 + 依存インストール (GPT-SoVITS の重い依存もここで入る)
+#サブモジュール + venv 作成 + 依存インストール (GPT-SoVITS の重い依存もここで入る)
 make init
 
 # .env を作成して API キーを記入
