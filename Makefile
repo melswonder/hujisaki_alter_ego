@@ -10,7 +10,7 @@ help:
 	@echo "make init   - submodule 取得 + .venv 作成 + 依存インストール"
 	@echo "make / run  - GUI (face_chat) を起動"
 	@echo "make small  - GUI (face_chat) をチャットのみで起動 (TTS 無し)"
-	@echo "make fast   - GUI (face_chat) を最大圧縮 torch.compile で起動 (品質より速度)"
+	@echo "make fast   - GUI (face_chat) を torch.compile (reduce-overhead) 付きで起動"
 	@echo "make voice  - CLI 版 (voice_chat) を起動"
 	@echo "make clean  - .venv を削除"
 
@@ -31,7 +31,7 @@ small:
 	ALTER_EGO_NO_TTS=1 $(PY) -m src.face_chat
 
 fast:
-	TTS_COMPILE=1 TTS_COMPILE_MODE=max-autotune TTS_COMPILE_BACKEND=inductor $(PY) -m src.face_chat
+	TTS_COMPILE=1 TTS_COMPILE_MODE=reduce-overhead TTS_COMPILE_BACKEND=inductor $(PY) -m src.face_chat
 
 voice:
 	$(PY) -m src.voice_chat
