@@ -110,6 +110,150 @@ LLM は応答の先頭に `[NN]` を付けて表情を指定 (`face_chat.py` で
 - **キャラを変える**: `src/persona.md` を書き換え (CLI / GUI 両方に反映)
 - **モデル差し替え**: `src/tts_config.yaml` の `t2s_weights_path` / `vits_weights_path`
 
+## 使用技術詳細
+
+### 1. LLM レイヤ
+
+| 役割 | 採用技術 |
+|------|----------|
+| 会話モデル | Anthropic Claude (`claude-sonnet-4-5`) / OpenAI ChatGPT (`gpt-4o-mini`) |
+| SDK | `anthropic` 0.99.0 / `openai` 2.34.0 |
+| プロバイダ抽象化 | `LLMClient` 基底クラス + `build_llm()` で `LLM_PROVIDER` 環境変数によって切替 (`src/voice_chat.py`) |
+| 人格設計 | `src/persona.md` をシステムプロンプトとして注入。GUI ではさらに表情タグ指示 (`[NN]` を先頭に強制) を末尾に追記 |
+| 履歴管理 | プロセスメモリ上の `list[dict]` (role/content)。永続化はしない。ユーザーが終了すれば履歴は消える |
+| 安全装置 | `max_tokens=1024` で長すぎる応答を抑止。529 過負荷時はフォールバック無しで例外伝播 (UI で `[error]` 表示) |
+
+### 2. TTS レイヤ — GPT-SoVITS
+
+GPT-SoVITS は **2 段ニューラルネット** + **few-shot リファレンス条件付け** という構造の音声合成器。
+
+#### 2.1 アーキテクチャ
+
+```
+入力テキスト ──► [GPT (T2S)] ──► 音響セマンティックトークン ──► [SoVITS (S2W)] ──► 波形 (32kHz)
+                    ▲                                                ▲
+                    │                                                │
+              REF_TEXT (ref の文)                            REF_AUDIO (5〜10秒の wav)
+                                                                     │
+                                                              ┌──────┴──────┐
+                                                              │ HuBERT 抽出  │  cnhuhbert_base_path
+                                                              │ BERT 埋込   │  bert_base_path
+                                                              └─────────────┘
+```
+
+| 段 | 中身 | チェックポイント |
+|----|------|------------------|
+| **GPT (T2S = Text-to-Semantic)** | 自己回帰型 Transformer (GPT-likely)。テキスト + リファレンス音響トークン → 続きの音響トークンを 1 個ずつ予測 | `huzisaki_models/huzisaki-e15.ckpt` (15 エポック fine-tune) |
+| **SoVITS (S2W = Semantic-to-Wave)** | VITS ベース (Variational Inference + Adversarial + Flow)。音響トークン + 話者埋込 → mel spectrogram → vocoder で波形 | `huzisaki_models/huzisaki_e8_s192.pth` (8 エポック fine-tune, 192 ステップ) |
+| **テキスト埋込 (BERT)** | `chinese-roberta-wwm-ext-large` を内部で利用。日本語含むトークンの意味埋込 | submodule の `pretrained_models/` |
+| **音響埋込 (HuBERT)** | `chinese-hubert-base` で REF_AUDIO の音響特徴を抽出 | submodule の `pretrained_models/` |
+
+VITS の中身: encoder で潜在変数の事後分布を出し、normalizing flow で整形、adversarial loss で discriminator と競争しながら mel→波形。
+
+#### 2.2 学習 vs 推論の役割分担
+
+- **学習 (もう完了済み)**: 藤崎の音声データで GPT 部と SoVITS 部の重みを fine-tune。`huzisaki-e15.ckpt` と `huzisaki_e8_s192.pth` がその成果物。**実行時には走らない**
+- **推論 (毎回走るのはこっち)**: 学習済み重み + リファレンス wav 1 個 (`huzisaki_007.wav`) + そのテキストを毎回読み込んで forward 計算
+
+リファレンス wav は「**今回の話し方の見本**」として動作 (zero-shot voice cloning)。学習で焼き込まれた声質ベース + リファレンスでその回の抑揚・テンションを決める、というハイブリッド。
+
+#### 2.3 推論パラメータ (`src/voice_chat.py:46-57`)
+
+| パラメータ | 値 | 役割 |
+|-----------|----|------|
+| `top_k` | 15 | サンプリング時の上位 K 個から選ぶ |
+| `top_p` | 1.0 | nucleus sampling 無効 (top_k のみ使用) |
+| `temperature` | 1.0 | 確率分布のシャープネス。1 で素直 |
+| `text_split_method` | `cut5` | 長文を句読点で分割して順次推論 (メモリ節約) |
+| `streaming_mode` | `False` | 全部生成してから一括再生 |
+| `parallel_infer` | `True` | 分割した chunk を並列推論 |
+
+#### 2.4 ハードウェア設定 (`src/tts_config.yaml`)
+
+- `device: mps` — Apple Silicon の Metal Performance Shaders (M1/M2/M3 GPU)
+- `is_half: false` — FP32 精度。MPS の FP16 は不安定なケースがあるため
+
+CUDA NVIDIA GPU マシンなら `device: cuda` + `is_half: true` で 5〜10 倍速くなる。
+
+### 3. オーディオ I/O
+
+| 用途 | ライブラリ |
+|------|-----------|
+| 波形再生 | `sounddevice` 0.5.5 (PortAudio バインディング) |
+| 数値配列 | `numpy` 1.26.4 (`<2.0` は GPT-SoVITS の制約) |
+| 波形操作 | `librosa` 0.10.2 (内部で resampling 等) |
+| エンコード | `torchaudio` 2.11.0 |
+
+サンプルレート 32kHz で出力。`np.float32` に正規化してから `sounddevice.play(blocking=True)` で再生。
+
+### 4. GUI レイヤ
+
+| 役割 | 技術 |
+|------|------|
+| ウィンドウ | `tkinter` (Tcl/Tk 9.0 同梱) |
+| 画像処理 | `Pillow` 10.4.0 (PNG 読み込み + LANCZOS リサンプリング + crop) |
+| レイアウト | `place()` で絶対座標オーバーレイ |
+| 透過レンダリング | 単一 `Canvas` 上で `create_image` (顔) と `create_text` (チャットログ) を同居させ、テキストをウィジェット背景なしで画像に直接描画 |
+| 縁取り (text shadow) | 同じテキストを 4 方向 (±1px) に黒で描画してから前景文字を上書き |
+| フルスクリーン | `wm_attributes('-fullscreen', True)`、Esc で切替 |
+| 非ブロック化 | `threading.Thread` で LLM/TTS を別スレッド、`queue.Queue` 経由で UI スレッドへ結果を戻す。50ms 間隔で `root.after` ポーリング |
+| 表情タグパース | `^\s*[\[［](\d{1,2})[\]］]\s*` の正規表現で半角/全角ブラケット両対応 |
+
+**tkinter の制約**: ウィジェット単位の真の透過は基本的に未サポート。Entry はウィジェット背景色を持たざるを得ないため、`bg=#0d0d0d` の暗色 + 細枠で「画面に溶け込む」風に妥協。日本語 IME を捨てれば Canvas ベースの自前 Entry で完全透過は可能だが、それは犠牲が大きいので採用せず。
+
+### 5. パッケージ管理 / ビルド
+
+| 役割 | 技術 |
+|------|------|
+| Python ランタイム | CPython 3.10 (uv が `~/.local/share/uv/python` に管理) |
+| 仮想環境 | `uv venv` (`.venv/` 直下) |
+| 依存解決 | `uv pip install` (Rust 実装で pip より大幅に高速) |
+| タスクランナー | GNU make (`Makefile`) |
+| サブモジュール | `git submodule` で GPT-SoVITS を pin 留め (commit `08d627c3`) |
+| 環境変数ロード | `python-dotenv` 1.2.2 (`.env` を `os.environ` に注入) |
+
+### 6. プロセスフロー (1 ターン)
+
+```
+User Enter
+  │
+  ├─► entry.delete + on_send()
+  │
+  ├─► 履歴に user メッセージ追加
+  │
+  └─► 別スレッドで LLMClient.chat()
+            │
+            ├─ Anthropic.messages.create or OpenAI.chat.completions.create
+            │
+            └─► result_q.put(("reply", text))
+                       │
+                       ▼
+                 main thread (50ms poll)
+                       │
+                       ├─ parse_face() で [NN] 抽出
+                       ├─ Canvas image 切替 (cover scale)
+                       ├─ Canvas text 追加 (3行間隔)
+                       └─► 別スレッドで synthesize() + play()
+                                │
+                                ├─ TTS.run() で波形生成 (重い)
+                                └─ sounddevice.play(blocking=True)
+```
+
+### 7. 主要バージョン (動作確認済み)
+
+```
+Python      3.10.20
+torch       2.11.0
+torchaudio  2.11.0
+transformers 4.50.0
+numpy       1.26.4
+anthropic   0.99.0
+openai      2.34.0
+Pillow      10.4.0
+sounddevice 0.5.5
+Tcl/Tk      9.0
+```
+
 ## トラブルシュート
 
 - **`OverloadedError 529`**: Anthropic 側の一時過負荷。少し待つか `LLM_PROVIDER=openai` に切替
