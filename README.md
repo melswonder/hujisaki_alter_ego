@@ -1,4 +1,6 @@
-# 藤崎 Alter Ego
+# hujisaki Alter Ego
+
+※GPUを積んでないとほぼ動かないですmacのM2で推論に3分ほどかかります
 
 <img width="1470" height="924" alt="スクリーンショット 2026-05-07 2 03 01" src="https://github.com/user-attachments/assets/6a3f32ab-ddb3-4dad-8b31-fef1b259c2a3" />
 
