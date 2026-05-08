@@ -14,6 +14,7 @@
   - TTS_COMPILE        1 にすると BERT/CN-HuBERT に torch.compile を試す
   - TTS_COMPILE_BACKEND torch.compile の backend (既定: inductor)
   - TTS_COMPILE_MODE    torch.compile の mode    (既定: default)
+  - TTS_HALF           1 にすると config.is_half を強制的に True (fp16) に上書き
 """
 
 from __future__ import annotations
@@ -171,9 +172,53 @@ def _maybe_torch_compile(tts: TTS) -> None:
                   f"(backend={backend}, mode={mode})", flush=True)
 
 
+def _patch_sv_for_mps_half() -> None:
+    """SV.compute_embedding3 は wav を fp16 にしてから Kaldi.fbank に渡すが、
+    MPS の torch.fft.rfft は fp16 未対応で落ちる。fbank だけ fp32 で計算し、
+    特徴量を half にキャストして embedding_model に渡すよう差し替える。
+
+    TTS.py 側は ``from sv import SV`` で読み込まれるため、bare module 名
+    ``sv`` をパッチする必要がある (``GPT_SoVITS.sv`` だと別モジュールに
+    なってしまい元のクラスにヒットしない)。
+    """
+    import torch
+    import sv as sv_mod
+    import kaldi as Kaldi
+
+    def compute_embedding3(self, wav):
+        with torch.no_grad():
+            wav_fp32 = wav.float()
+            feat = torch.stack(
+                [Kaldi.fbank(w.unsqueeze(0), num_mel_bins=80,
+                             sample_frequency=16000, dither=0)
+                 for w in wav_fp32]
+            )
+            if self.is_half:
+                feat = feat.half()
+            return self.embedding_model.forward3(feat)
+
+    sv_mod.SV.compute_embedding3 = compute_embedding3
+
+
 def load_tts() -> TTS:
     cfg_path = ROOT / "src" / "tts_config.yaml"
     config = TTS_Config(str(cfg_path))
+
+    # env が立っていれば yaml の is_half を上書き
+    if os.environ.get("TTS_HALF", "").lower() in ("1", "true", "yes"):
+        if str(config.device) == "cpu":
+            print("[tts] TTS_HALF=1 だが device=cpu のため無視します", flush=True)
+        else:
+            config.is_half = True
+
+    # yaml/env いずれの経路でも fp16 になったら MPS 用 SV パッチを当てる
+    if config.is_half and str(config.device) != "cpu":
+        try:
+            _patch_sv_for_mps_half()
+            print(f"[tts] is_half=True (fp16) で起動 (device={config.device})", flush=True)
+        except Exception as e:
+            print(f"[tts] SV モンキーパッチ失敗 (続行): {e}", flush=True)
+
     tts = TTS(config)
     _maybe_torch_compile(tts)
     return tts
