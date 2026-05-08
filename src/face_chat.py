@@ -24,14 +24,8 @@ from tkinter import ttk
 
 from PIL import Image, ImageTk
 
-from src.voice_chat import (
-    ROOT,
-    SYSTEM_PROMPT as PERSONA_PROMPT,
-    SpeechPipeline,
-    build_llm,
-    load_tts,
-    split_sentences,
-)
+from src.llm import ROOT, SYSTEM_PROMPT as PERSONA_PROMPT, build_llm
+from src.tts import SpeechPipeline, load_tts, split_sentences
 
 FACE_DIR = ROOT / "face"
 DEFAULT_FACE = 0
