@@ -342,6 +342,7 @@ def _apply_cli_flags(args: argparse.Namespace) -> None:
         os.environ.setdefault("TTS_COMPILE", "1")
         os.environ.setdefault("TTS_COMPILE_MODE", "reduce-overhead")
         os.environ.setdefault("TTS_COMPILE_BACKEND", "inductor")
+        os.environ.setdefault("TTS_HALF", "1")
 
 
 def main() -> None:
@@ -356,7 +357,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--fast", action="store_true",
-        help="torch.compile (reduce-overhead) を有効化",
+        help="torch.compile (reduce-overhead) + fp16 (is_half) を有効化",
     )
     args = parser.parse_args()
     _apply_cli_flags(args)

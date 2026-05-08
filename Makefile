@@ -19,7 +19,7 @@ help:
 	@printf "$(C_CMD)make init$(C_OFF)       - submodule 取得 + .venv 作成 + 依存インストール\n"
 	@printf "$(C_CMD)make / run$(C_OFF)      - GUI 起動 (ARGS で追加フラグを渡せる)\n"
 	@printf "$(C_CMD)make eko$(C_OFF)        - --eko (TTS 無し)\n"
-	@printf "$(C_CMD)make fast$(C_OFF)       - --fast (torch.compile reduce-overhead)\n"
+	@printf "$(C_CMD)make fast$(C_OFF)       - --fast (torch.compile reduce-overhead + fp16)\n"
 	@printf "$(C_CMD)make streaming$(C_OFF)  - --streaming (TTS ストリーミング合成)\n"
 	@printf "$(C_CMD)make voice$(C_OFF)      - CLI 版 (voice_chat) を起動\n"
 	@printf "$(C_CMD)make clean$(C_OFF)      - .venv を削除\n"
