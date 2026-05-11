@@ -1,7 +1,13 @@
 .DS_Store
 
+# 表情画像 / 推論用モデル・リファレンス音声
+# (著作権の関係で同梱しません。各自学習目的の範囲内でご用意ください)
+face/AlterEgoFace*.png
+huzisaki_models/huzisaki-e15.ckpt
+huzisaki_models/huzisaki_007.wav
+huzisaki_models/huzisaki_e8_s192.pth
+
 # 学習用データ・キャッシュ(推論には不要)
-# huzisaki_models/*.wav
 huzisaki_models/*.wav.pt
 huzisaki_models/*.list
 
